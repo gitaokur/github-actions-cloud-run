@@ -1,0 +1,56 @@
+name: Deploy to Google Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  REGION: ${{ secrets.REGION }}
+  IMAGE_URL: ${{ secrets.REGION }}-docker.pkg.dev/${{ secrets.PROJECT_ID }}/${{ secrets.REPO_NAME }}/${{ secrets.APP_NAME }}:latest
+
+jobs:
+  build-deploy:
+    name: Build and Deploy
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - uses: oven-sh/setup-bun@v1
+
+    - name: Authenticate with Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        project_id: ${{ secrets.PROJECT_ID }}
+        workload_identity_provider: ${{ secrets.POOL_ID }}
+        export_environment_variables: 'true'
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        project_id: ${{ secrets.PROJECT_ID }}
+      
+    - name: Configure Docker for Google Artifact Registry 
+      run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
+
+    - name: Build container image
+      run: docker build . --tag ${{ env.IMAGE_URL }}
+      
+    - name: Authentication before push
+      run: gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin https://eu-north1-docker.pkg.dev
+
+    - name: Push container image
+      run: docker push ${{ env.IMAGE_URL }}
+
+    - name: Deploy to Cloud Run
+      run: |
+        gcloud run deploy ${{ secrets.APP_NAME }} \
+          --image ${{ env.IMAGE_URL }} \
+          --platform managed \
+          --region ${{ env.REGION }} \
+          --allow-unauthenticated
